@@ -235,6 +235,64 @@ async def verify(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
+# Firefox extension: read-only DB export (image registrations only)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/db/export")
+async def export_db():
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ContentRegistration)
+            .filter(ContentRegistration.content_type == ContentType.image)
+            .join(Creator)
+            .all()
+        )
+        entries = [
+            {
+                "id": str(row.id),
+                "phash": row.fingerprint,          # 16-char hex from phash_image()
+                "creator_name": row.creator.full_name,
+                "creator_handle": row.creator.handle,
+                "creator_fingerprint": row.creator.pgp_fingerprint,
+                "registered_at": row.registered_at.isoformat(),
+                "title": row.title,
+            }
+            for row in rows
+        ]
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": "1",
+            "count": len(entries),
+            "entries": entries,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/db/version")
+async def db_version():
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        count, latest = (
+            db.query(
+                func.count(ContentRegistration.id),
+                func.max(ContentRegistration.registered_at),
+            )
+            .filter(ContentRegistration.content_type == ContentType.image)
+            .one()
+        )
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "count": count,
+            "latest_at": latest.isoformat() if latest else None,
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Serve frontend
 # ---------------------------------------------------------------------------
 

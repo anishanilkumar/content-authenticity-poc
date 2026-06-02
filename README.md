@@ -7,7 +7,7 @@ Proof-of-concept for media authenticity. Creators register images or PDFs with a
 - **Register** — generates a PGP keypair for the creator, computes a perceptual hash (images) or normalised SHA-256 (PDFs), signs the assertion, and stores everything in the database.
 - **Verify** — re-fingerprints the uploaded file, finds the closest registered record, checks the PGP signature, and returns the match status.
 
-Image matching tolerates re-encoding and minor edits using DCT perceptual hashing (Hamming distance ≤ 10 = exact, ≤ 20 = modified, > 20 = not found).
+Image matching tolerates re-encoding and minor edits using DCT perceptual hashing (Hamming distance = 0 → authentic, 1–20 → possibly modified, > 20 → not found).
 
 ## Stack
 
@@ -44,3 +44,5 @@ Open `http://localhost:8000`.
 | POST | `/api/login` | Authenticate by uploading private key |
 | POST | `/api/register-content` | Sign and register an image or PDF |
 | POST | `/api/verify` | Verify a file against registered content |
+| GET | `/api/db/export` | Full image registration dump (for browser extension) |
+| GET | `/api/db/version` | Count + latest timestamp for cheap polling |
