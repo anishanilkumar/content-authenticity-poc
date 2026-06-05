@@ -36,7 +36,10 @@ class ContentRegistration(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     creator_id = Column(UUID(as_uuid=True), ForeignKey("creators.id"), nullable=False)
     content_type = Column(Enum(ContentType), nullable=False)
-    fingerprint = Column(String, nullable=False, index=True)
+    fingerprint = Column(String, nullable=False, index=True)  # 64-bit pHash / sha256-text
+    # Stricter image fingerprints (nullable: legacy rows + PDFs leave these unset)
+    sha256 = Column(String, nullable=True, index=True)        # exact raw-bytes hash
+    phash256 = Column(String, nullable=True)                  # 256-bit pHash (hash_size=16)
     signed_assertion = Column(Text, nullable=False)  # OpenPGP clearsign block
     title = Column(String, nullable=True)
     registered_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

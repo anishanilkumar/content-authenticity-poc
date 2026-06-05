@@ -19,7 +19,11 @@ import imagehash
 from PIL import Image
 
 AUTHENTIC_THRESHOLD = 0   # bits: only an exact perceptual match is authentic
-MODIFIED_THRESHOLD = 20   # bits: above this → treat as different image
+MODIFIED_THRESHOLD = 20   # bits: above this → treat as different image (64-bit)
+
+# 256-bit (hash_size=16) high-resolution pHash: finer detail than the 64-bit
+# hash, so the "modified" band is tightened. 24/256 ≈ 90.6% similarity.
+PHASH256_MODIFIED_THRESHOLD = 24
 
 
 def phash_image(file_bytes: bytes) -> str:
@@ -28,12 +32,23 @@ def phash_image(file_bytes: bytes) -> str:
     return str(imagehash.phash(img))
 
 
+def phash256_image(file_bytes: bytes) -> str:
+    """Return the 256-bit (hash_size=16) pHash as a 64-char hex string."""
+    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    return str(imagehash.phash(img, hash_size=16))
+
+
+def sha256_bytes(file_bytes: bytes) -> str:
+    """Exact SHA-256 of the raw file bytes (byte-for-byte identity check)."""
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
 def hamming_distance(hash_a: str, hash_b: str) -> int:
     return int(imagehash.hex_to_hash(hash_a) - imagehash.hex_to_hash(hash_b))
 
 
-def similarity_score(distance: int) -> float:
-    return round(1.0 - distance / 64.0, 3)
+def similarity_score(distance: int, bits: int = 64) -> float:
+    return round(1.0 - distance / bits, 3)
 
 
 def classify_image_match(distance: int) -> str:

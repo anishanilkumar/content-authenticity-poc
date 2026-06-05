@@ -12,7 +12,9 @@ from fingerprint import (
     MODIFIED_THRESHOLD,
     classify_image_match,
     hamming_distance,
+    phash256_image,
     phash_image,
+    sha256_bytes,
     sha256_pdf,
     similarity_score,
 )
@@ -107,6 +109,8 @@ async def register_content(
     file_bytes = await file.read()
     suffix = Path(file.filename).suffix.lower()
 
+    sha256 = None
+    phash256 = None
     if suffix == ".pdf":
         content_type = ContentType.pdf
         fingerprint = sha256_pdf(file_bytes)
@@ -115,6 +119,9 @@ async def register_content(
         content_type = ContentType.image
         fingerprint = phash_image(file_bytes)
         fingerprint_type = "phash-dct-64"
+        # Stricter image fingerprints: exact byte hash + high-res 256-bit pHash.
+        sha256 = sha256_bytes(file_bytes)
+        phash256 = phash256_image(file_bytes)
     else:
         raise HTTPException(400, f"Unsupported file type '{suffix}'. Use JPEG, PNG, WebP, or PDF.")
 
@@ -130,6 +137,9 @@ async def register_content(
             "handle": creator.handle,
             "fingerprint": fingerprint,
             "fingerprint_type": fingerprint_type,
+            # Signed so the extension can trust them after verifying the signature.
+            "sha256": sha256,
+            "phash256": phash256,
             "content_type": content_type.value,
             "title": title,
             "registered_at": datetime.now(timezone.utc).isoformat(),
@@ -141,6 +151,8 @@ async def register_content(
             creator_id=creator.id,
             content_type=content_type,
             fingerprint=fingerprint,
+            sha256=sha256,
+            phash256=phash256,
             signed_assertion=signed,
             title=title,
         )
@@ -152,6 +164,8 @@ async def register_content(
             "registration_id": str(reg.id),
             "fingerprint": fingerprint,
             "fingerprint_type": fingerprint_type,
+            "sha256": sha256,
+            "phash256": phash256,
             "signed_assertion": signed,
         }
     finally:
@@ -197,13 +211,31 @@ async def verify(file: UploadFile = File(...)):
             }
 
         elif suffix in SUPPORTED_IMAGES:
-            fingerprint = phash_image(file_bytes)
             all_regs = (
                 db.query(ContentRegistration)
                 .filter(ContentRegistration.content_type == ContentType.image)
                 .all()
             )
 
+            # Tier 1 — exact byte-for-byte match (catches any change incl. 1px).
+            sha256 = sha256_bytes(file_bytes)
+            exact = next((r for r in all_regs if r.sha256 and r.sha256 == sha256), None)
+            if exact is not None:
+                valid, _ = verify_signature(exact.creator.public_key_armored, exact.signed_assertion)
+                return {
+                    "status": "verified" if valid else "signature_invalid",
+                    "match_type": "exact",
+                    "hamming_distance": 0,
+                    "similarity_score": 1.0,
+                    "creator": {"name": exact.creator.full_name, "handle": exact.creator.handle},
+                    "title": exact.title,
+                    "registered_at": exact.registered_at.isoformat(),
+                    "signature_valid": valid,
+                    "signed_assertion": exact.signed_assertion,
+                }
+
+            # Tier 2 — perceptual fallback (survives re-encoding). Lowest Hamming wins.
+            fingerprint = phash_image(file_bytes)
             best, best_dist = None, 65
             for reg in all_regs:
                 dist = hamming_distance(fingerprint, reg.fingerprint)
@@ -252,9 +284,13 @@ async def export_db():
             {
                 "id": str(row.id),
                 "phash": row.fingerprint,          # 16-char hex from phash_image()
+                "phash256": row.phash256,          # 64-char hex (hash_size=16), nullable
+                "sha256": row.sha256,              # exact raw-bytes hash, nullable
                 "creator_name": row.creator.full_name,
                 "creator_handle": row.creator.handle,
                 "creator_fingerprint": row.creator.pgp_fingerprint,
+                "creator_public_key": row.creator.public_key_armored,
+                "signed_assertion": row.signed_assertion,
                 "registered_at": row.registered_at.isoformat(),
                 "title": row.title,
             }
@@ -262,7 +298,7 @@ async def export_db():
         ]
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "schema_version": "1",
+            "schema_version": "2",
             "count": len(entries),
             "entries": entries,
         }
